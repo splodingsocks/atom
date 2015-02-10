@@ -119,19 +119,7 @@ class Project extends Model
     @rootDirectories = []
     @repositories = []
 
-    for projectPath, i in projectPaths
-      projectPath = path.normalize(projectPath)
-
-      directory = if fs.isDirectorySync(projectPath)
-        projectPath
-      else
-        path.dirname(projectPath)
-      @rootDirectories.push(new Directory(directory))
-
-      if repo = GitRepository.open(directory, project: this)
-        repo.refreshIndex()
-        repo.refreshStatus()
-      @repositories.push(repo ? null)
+    @addPath(projectPath, emitEvent: false) for projectPath in projectPaths
 
     @emit "path-changed"
     @emitter.emit 'did-change-paths', projectPaths
@@ -139,6 +127,27 @@ class Project extends Model
   setPath: (path) ->
     Grim.deprecate("Use ::setPaths instead")
     @setPaths([path])
+
+  # Public: Add a path the project's list of root paths
+  #
+  # * `projectPath` {String} The path to the directory to add.
+  addPath: (projectPath, options) ->
+    projectPath = path.normalize(projectPath)
+
+    directory = if fs.isDirectorySync(projectPath)
+      projectPath
+    else
+      path.dirname(projectPath)
+    @rootDirectories.push(new Directory(directory))
+
+    if repo = GitRepository.open(directory, project: this)
+      repo.refreshIndex()
+      repo.refreshStatus()
+    @repositories.push(repo ? null)
+
+    unless options?.emitEvent is false
+      @emit "path-changed"
+      @emitter.emit 'did-change-paths', @getPaths()
 
   # Public: Get an {Array} of {Directory}s associated with this project.
   getDirectories: ->
