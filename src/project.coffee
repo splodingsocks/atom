@@ -38,6 +38,8 @@ class Project extends Model
   constructor: ({path, paths, @buffers}={}) ->
     @emitter = new Emitter
     @buffers ?= []
+    @rootDirectories = []
+    @repositories = []
 
     @subscribeToBuffer(buffer) for buffer in @buffers
 
@@ -47,12 +49,7 @@ class Project extends Model
 
   destroyed: ->
     buffer.destroy() for buffer in @getBuffers()
-    @destroyRepo()
-
-  destroyRepo: ->
-    if @repo?
-      @repo.destroy()
-      @repo = null
+    @setPaths([])
 
   destroyUnretainedBuffers: ->
     buffer.destroy() for buffer in @getBuffers() when not buffer.isRetained()
@@ -96,10 +93,10 @@ class Project extends Model
 
   # Public: Get an {Array} of {GitRepository}s associated with the project's
   # directories.
-  getRepositories: -> _.compact([@repo])
+  getRepositories: -> @repositories
   getRepo: ->
     Grim.deprecate("Use ::getRepositories instead")
-    @repo
+    @getRepositories()[0]
 
   ###
   Section: Managing Paths
@@ -108,41 +105,47 @@ class Project extends Model
 
   # Public: Get an {Array} of {String}s containing the paths of the project's
   # directories.
-  getPaths: -> _.compact([@rootDirectory?.path])
+  getPaths: -> rootDirectory.path for rootDirectory in @rootDirectories
   getPath: ->
     Grim.deprecate("Use ::getPaths instead")
-    @rootDirectory?.path
+    @getPaths()[0]
 
   # Public: Set the paths of the project's directories.
   #
   # * `projectPaths` {Array} of {String} paths.
   setPaths: (projectPaths) ->
-    [projectPath] = projectPaths
-    projectPath = path.normalize(projectPath) if projectPath
-    @rootDirectory?.off()
+    rootDirectory.off() for rootDirectory in @rootDirectories
+    repository?.destroy() for repository in @repositories
+    @rootDirectories = []
+    @repositories = []
 
-    @destroyRepo()
-    if projectPath?
-      directory = if fs.isDirectorySync(projectPath) then projectPath else path.dirname(projectPath)
-      @rootDirectory = new Directory(directory)
-      if @repo = GitRepository.open(directory, project: this)
-        @repo.refreshIndex()
-        @repo.refreshStatus()
-    else
-      @rootDirectory = null
+    for projectPath, i in projectPaths
+      projectPath = path.normalize(projectPath)
+
+      directory = if fs.isDirectorySync(projectPath)
+        projectPath
+      else
+        path.dirname(projectPath)
+      @rootDirectories.push(new Directory(directory))
+
+      if repo = GitRepository.open(directory, project: this)
+        repo.refreshIndex()
+        repo.refreshStatus()
+      @repositories.push(repo ? null)
 
     @emit "path-changed"
     @emitter.emit 'did-change-paths', projectPaths
+
   setPath: (path) ->
     Grim.deprecate("Use ::setPaths instead")
     @setPaths([path])
 
   # Public: Get an {Array} of {Directory}s associated with this project.
   getDirectories: ->
-    [@rootDirectory]
+    @rootDirectories
   getRootDirectory: ->
     Grim.deprecate("Use ::getDirectories instead")
-    @rootDirectory
+    @getDirectories()[0]
 
   resolve: (uri) ->
     Grim.deprecate("Use `Project::getDirectories()[0]?.resolve()` instead")
@@ -156,6 +159,8 @@ class Project extends Model
     else
       if fs.isAbsolute(uri)
         path.normalize(fs.absolute(uri))
+
+      # TODO: what should we do here when there are multiple directories?
       else if projectPath = @getPaths()[0]
         path.normalize(fs.absolute(path.join(projectPath, uri)))
       else
@@ -166,7 +171,10 @@ class Project extends Model
   # * `fullPath` {String} full path
   relativize: (fullPath) ->
     return fullPath if fullPath?.match(/[A-Za-z0-9+-.]+:\/\//) # leave path alone if it has a scheme
-    @rootDirectory?.relativize(fullPath) ? fullPath
+    for rootDirectory in @rootDirectories
+      if (relativePath = rootDirectory.relativize(fullPath))?
+        return relativePath
+    fullPath
 
   # Public: Determines whether the given path (real or symbolic) is inside the
   # project's directory.
@@ -196,7 +204,7 @@ class Project extends Model
   #
   # Returns whether the path is inside the project's root directory.
   contains: (pathToCheck) ->
-    @rootDirectory?.contains(pathToCheck) ? false
+    @rootDirectories.some (dir) -> dir.contains(pathToCheck)
 
   ###
   Section: Searching and Replacing
