@@ -761,7 +761,8 @@ class Atom extends Model
     ipc.send('call-window-method', 'setDocumentEdited', edited)
 
   setRepresentedFilename: (filename) ->
-    ipc.send('call-window-method', 'setRepresentedFilename', filename)
+    # MURPHY: Disable this line if a strange icon shows in the title bar.
+    # ipc.send('call-window-method', 'setRepresentedFilename', filename)
 
   addProjectFolder: ->
     @pickFolder (selectedPaths = []) =>
